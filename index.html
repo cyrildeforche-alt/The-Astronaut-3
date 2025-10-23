@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Dot Escape — Elemental Journey</title>
+<style>
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: #000;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-family: system-ui, sans-serif;
+    color: #000;
+  }
+  canvas {
+    border-radius: 12px;
+    box-shadow: 0 0 40px rgba(0,0,0,0.7);
+    background: #000;
+  }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+let W, H;
+let showIntro = true;
+let introAlpha = 0;
+let blinkTimer = 0;
+
+// Images
+const astronautImg = new Image();
+astronautImg.src = 'images/ASTRO_IAN.png';
+
+// Map each theme to its death image
+const deathImages = {
+  '00 The Beginning': 'images/IAN.png',
+  '01 Coast': 'images/IAN2.png',
+  '02 Urban Fringe': 'images/IAN3.png',
+  '03 Highway': 'images/IAN4.png',
+  '04 Space1': 'images/IAN5.png',
+  '05 Metropolis': 'images/IAN6.png',
+  '06 Garden': 'images/IAN7.png',
+  '07 Space2': 'images/IAN8.png',
+  '08 Island': 'images/IAN9.png',
+  '09 The Forest': 'images/IAN10.png',
+  '11 The River Basin': 'images/IAN11.png',
+  '12 Metropolis': 'images/IAN12.png',
+  '13 The Clouds': 'images/IAN13.png',
+  '14 The City': 'images/IAN14.png',
+  '14 The End': 'images/IAN15.png'
+};
+
+// Preload death images
+for (const key in deathImages) {
+  const img = new Image();
+  img.src = deathImages[key];
+  deathImages[key] = img;
+}
+
+// Game variables
+let dot = {};
+let gravity, lift, speed;
+let obstacles = [];
+let score = 0;
+let running = true;
+
+const OBSTACLES_PER_BIOME = 3;
+let obstaclesPassedInCurrentBiome = 0;
+let checkpointThemeIndex = 0;
+
+const themes = [
+  { name:'00 The Beginning', colors:['#BFBFBF','#F2F2F2'], obstacle:'#000'},
+  { name:'01 Coast', colors:['#DCEEF2','#D9C9BA'], obstacle:'#000'},
+  { name:'02 Urban Fringe', colors:['#F2E9D8','#CDD9BA'], obstacle:'#000'},
+  { name:'03 Highway', colors:['#F9D8B4','#B0B0B0'], obstacle:'#000'},
+  { name:'04 Space1', colors:['#F0F1F2','#D9C1BF'], obstacle:'#000'},
+  { name:'05 Metropolis', colors:['#DCE6F2 ','#F2D6BD'], obstacle:'#000'},
+  { name:'06 Garden', colors:['#D0D9B0','#D3D9BF'], obstacle:'#000'},
+  { name:'07 Space2', colors:['#666973','#D5DFF2'], obstacle:'#000'},
+  { name:'08 Island', colors:['#F2C4C8','#D0ECF2'], obstacle:'#000'},
+  { name:'09 The Forest', colors:['#C1C4BA','#CADDB3'], obstacle:'#000'},
+  { name:'11 The River Basin', colors:['#F2DCC2','#D5E5F2'], obstacle:'#000'},
+  { name:'12 Metropolis', colors:['#E4EBF2','#D2CEC4'], obstacle:'#000'},
+  { name:'13 The Clouds', colors:['#C9D4DC','#F2E6D0'], obstacle:'#000'},
+  { name:'14 The City', colors:['#C1C9D9','#727A8C'], obstacle:'#000'},
+  { name:'14 The End', colors:['#BFBFBF','#F2F2F2'], obstacle:'#000'},
+];
+let themeIndex = 0;
+
+// Canvas resize
+function resizeCanvas() {
+  canvas.width = window.innerWidth * 0.9;
+  canvas.height = window.innerHeight * 0.7;
+  W = canvas.width;
+  H = canvas.height;
+
+  gravity = H * 0.0005;
+  lift = -H * 0.015;
+  speed = W * 0.004;
+
+  if(!dot.x) reset();
+}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+
+// Gradient background
+function gradientBackground(){
+  const theme = themes[themeIndex % themes.length];
+  const g = ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0, theme.colors[0]);
+  g.addColorStop(1, theme.colors[1]);
+  return g;
+}
+
+// Reset game
+function reset(){
+  dot = { x: W*0.1, y: H/2, r: H*0.025, vy: 0 };
+  obstacles = [];
+  score = 0;
+  themeIndex = checkpointThemeIndex;
+  obstaclesPassedInCurrentBiome = 0;
+  running = true;
+}
+
+// Spawn obstacles
+function spawnObstacle(){
+  const gap = H*0.55 + Math.random() * H*0.1;
+  const gapY = H*0.05 + Math.random() * (H - gap - H*0.1);
+  const w = W*0.05;
+  obstacles.push({ x: W, w: w, gapY: gapY, gap: gap });
+}
+
+// Handle death
+function handleDeath(){
+  running = false;
+  checkpointThemeIndex = themeIndex;
+}
+
+// Update game
+function update(){
+  if(!running) return;
+
+  if(!showIntro){
+    dot.vy += gravity;
+    dot.y += dot.vy;
+  }
+
+  if(dot.y + dot.r > H || dot.y - dot.r < 0){ 
+    dot.y = Math.min(Math.max(dot.y, dot.r), H - dot.r);
+    dot.vy = 0; 
+    if(dot.y + dot.r >= H && !showIntro) handleDeath();
+  }
+
+  for(let i=obstacles.length-1;i>=0;i--){
+    const o = obstacles[i];
+    o.x -= speed;
+
+    if(dot.x + dot.r > o.x && dot.x - dot.r < o.x + o.w){
+      if(dot.y - dot.r < o.gapY || dot.y + dot.r > o.gapY + o.gap){
+        handleDeath();
+        return;
+      }
+    }
+
+    if(o.x + o.w < 0){
+      obstacles.splice(i,1);
+      score++;
+      obstaclesPassedInCurrentBiome++;
+
+      if(obstaclesPassedInCurrentBiome >= OBSTACLES_PER_BIOME){
+        themeIndex++;
+        checkpointThemeIndex = themeIndex;
+        obstaclesPassedInCurrentBiome = 0;
+      }
+    }
+  }
+
+  if(obstacles.length < 2 || (obstacles[obstacles.length-1].x < W - W*0.4)){
+    spawnObstacle();
+  }
+}
+
+// Draw game
+function draw(){
+  const theme = themes[themeIndex % themes.length];
+
+  ctx.fillStyle = gradientBackground();
+  ctx.fillRect(0,0,W,H);
+
+  ctx.fillStyle = theme.obstacle;
+  for(const o of obstacles){
+    ctx.fillRect(o.x,0,o.w,o.gapY);
+    ctx.fillRect(o.x,o.gapY+o.gap,o.w,H-(o.gapY+o.gap));
+  }
+
+  if(astronautImg.complete && astronautImg.naturalWidth > 0){
+    ctx.drawImage(astronautImg, dot.x - dot.r*2.5, dot.y - dot.r*2.5, dot.r*7, dot.r*7.7);
+  } else {
+    ctx.beginPath();
+    ctx.arc(dot.x,dot.y,dot.r,0,Math.PI*2);
+    ctx.fillStyle = '#fff';
+    ctx.fill();
+  }
+
+  ctx.fillStyle = '#000';
+  ctx.font = `${Math.floor(H*0.025)}px system-ui`;
+  ctx.textAlign = 'left';
+  ctx.fillText(`Score: ${score} | Scene: ${theme.name}`,10,H*0.06);
+
+  // Death screen
+  if(!running){
+    const deathImg = deathImages[theme.name];
+    if(deathImg && deathImg.complete && deathImg.naturalWidth > 0){
+      const aspect = deathImg.naturalWidth / deathImg.naturalHeight;
+      let imgWidth = W;
+      let imgHeight = W / aspect;
+      if(imgHeight > H){
+        imgHeight = H;
+        imgWidth = H * aspect;
+      }
+      ctx.drawImage(deathImg, (W - imgWidth)/2, (H - imgHeight)/2, imgWidth, imgHeight);
+    }
+
+    const goX = W / 2;
+    const goY = H * 0.97;
+    const goW = W * 0.16;
+    const goH = H * 0.05;
+
+    ctx.fillStyle = '#000';
+    ctx.fillRect(goX - goW/2, goY - goH/2, goW, goH);
+
+    ctx.fillStyle = '#FFF';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('You Landed! — Press UP to continue', goX, goY + goH*0.05);
+    ctx.textAlign = 'left';
+  }
+}
+
+// Intro screen
+function drawIntro() {
+  introAlpha += 0.01;
+  if(introAlpha > 1) introAlpha = 1;
+
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.save();
+  ctx.globalAlpha = introAlpha;
+  ctx.fillStyle = '#fff';
+  ctx.textAlign = 'center';
+
+  ctx.font = `${Math.floor(H*0.04)}px system-ui`;
+  ctx.fillText('The', W/2, H*0.2);
+  ctx.fillText('INTERSTELLAR ASTRONAUT NETWORK', W/2, H*0.28);
+  ctx.fillText('(I.A.N. for short)', W/2, H*0.34);
+
+  ctx.font = `${Math.floor(H*0.03)}px system-ui`;
+  ctx.fillText('has a job for you!', W/2, H*0.42);
+  ctx.fillText('An important artifact was lost on planet Earth!', W/2, H*0.50);
+  ctx.fillText('Your mission:', W/2, H*0.58);
+  ctx.fillText('Retrieve all the pages of this lost artifact & report back to base.', W/2, H*0.64);
+
+  if(astronautImg.complete && astronautImg.naturalWidth > 0){
+    ctx.drawImage(astronautImg, dot.x - dot.r*2.5, dot.y - dot.r*2.5, dot.r*7, dot.r*7.7);
+  }
+
+  blinkTimer += 1;
+  if(Math.floor(blinkTimer/30) % 2 === 0){
+    ctx.fillText('Press UP to begin', W/2, H*0.8);
+  }
+
+  ctx.restore();
+}
+
+// Game loop
+function loop(){
+  if(showIntro){
+    drawIntro();
+  } else {
+    update();
+    draw();
+  }
+  requestAnimationFrame(loop);
+}
+loop();
+
+// Controls
+document.addEventListener('keydown', e=>{
+  if(showIntro && e.code==='ArrowUp'){
+    showIntro = false;
+  } else if(e.code==='ArrowUp'){
+    if(running){
+      dot.vy = lift;
+    } else {
+      reset();
+    }
+  }
+});
+
+canvas.addEventListener('touchstart', ()=>{
+  if(showIntro){
+    showIntro = false;
+  } else {
+    if(running){
+      dot.vy = lift;
+    } else {
+      reset();
+    }
+  }
+});
+</script>
+</body>
+</html>
